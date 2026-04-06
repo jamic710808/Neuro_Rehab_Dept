@@ -4,10 +4,12 @@ import { Header } from './components/Header';
 import { CareEntry } from './components/CareEntry';
 import { NewPatientEntry } from './components/NewPatientEntry';
 import { Dashboard } from './components/Dashboard';
+import { GroupSelector } from './components/GroupSelector';
 import { StaffData, ViewType, SyncStatus } from './types';
 import { recalculateStaffTotals } from './lib/utils';
 import { supabase } from './supabase';
 import { CheckCircle, AlertTriangle, X, Plus, Trash } from 'lucide-react';
+import { GROUPS, GroupConfig } from './config/groups';
 
 const getInitialMonth = () => {
   const now = new Date();
@@ -15,14 +17,14 @@ const getInitialMonth = () => {
 };
 
 export default function App() {
+  const [activeGroup, setActiveGroup] = useState<GroupConfig | null>(null);
   const [currentView, setCurrentView] = useState<ViewType>('entry-care');
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('synced');
 
   const [selectedMonth, setSelectedMonth] = useState<string>(getInitialMonth);
 
-  const [currentCmiNeuro, setCurrentCmiNeuro] = useState(1.2500);
-  const [currentCmiRehab, setCurrentCmiRehab] = useState(1.1000);
+  const [cmiConfig, setCmiConfig] = useState<Record<string, number>>({});
 
   const [toasts, setToasts] = useState<{ id: number; message: string; type: 'success' | 'error' | 'warning' }[]>([]);
 
@@ -55,27 +57,30 @@ export default function App() {
     }, 3000);
   }, []);
 
-  const loadDatabaseForMonth = useCallback(async (monthStr: string) => {
+  const loadDatabaseForMonth = useCallback(async (monthStr: string, group: GroupConfig | null) => {
+    if (!group) return;
     setSyncStatus('syncing');
 
     try {
       const [year, month] = monthStr.split('-').map(Number);
 
-      // 1. Fetch active staff
+      // 1. Fetch active staff filtered by group
       const { data: staffData, error: staffErr } = await supabase
         .from('staff')
         .select('*')
         .eq('is_active', true)
+        .eq('group_id', group.id)
         .order('id');
 
       if (staffErr) throw staffErr;
       const activeStaff = staffData || [];
 
-      // 2. Fetch daily metrics
+      // 2. Fetch daily metrics v2 filtered by group
       const { data: metricsData, error: metricsErr } = await supabase
-        .from('daily_metrics')
+        .from('daily_metrics_v2')
         .select('*')
-        .eq('month_str', monthStr);
+        .eq('month_str', monthStr)
+        .eq('group_id', group.id);
 
       if (metricsErr) throw metricsErr;
 
@@ -93,11 +98,9 @@ export default function App() {
             date: `${month.toString().padStart(2, "0")}/${d.toString().padStart(2, "0")}`,
             day: d,
             dayOfWeek,
-            careCountNeuro: metric?.care_neuro || 0,
-            careCountRehab: metric?.care_rehab || 0,
-            newPatientsNeuro: metric?.new_neuro || 0,
-            newPatientsRehab: metric?.new_rehab || 0,
-            newPatientsOther: metric?.new_other || 0,
+            careCounts: metric?.care_counts || {},
+            newPatients: metric?.new_patients || {},
+            newPatientsOther: metric?.new_others || 0,
             newBeds: metric?.new_beds || []
           });
         }
@@ -106,7 +109,7 @@ export default function App() {
           id: Number(staff.id),
           name: staff.name,
           records: records,
-          ...recalculateStaffTotals(records, currentCmiNeuro, currentCmiRehab)
+          ...recalculateStaffTotals(records, cmiConfig)
         };
       });
 
@@ -122,36 +125,36 @@ export default function App() {
       setSyncStatus('error');
       showToast("載入資料失敗，請檢查網路或是資料庫設定", 'error');
     }
-  }, [currentCmiNeuro, currentCmiRehab, selectedStaffId, showToast]);
+  }, [cmiConfig, selectedStaffId, showToast]);
 
+  // Hook to reload when month or active group changes
   useEffect(() => {
-    loadDatabaseForMonth(selectedMonth);
-  }, [selectedMonth, loadDatabaseForMonth]);
+    loadDatabaseForMonth(selectedMonth, activeGroup);
+  }, [selectedMonth, activeGroup, loadDatabaseForMonth]);
 
   const rowTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
 
   const debouncedUpsertRow = (staffId: number, dayIndex: number, record: any) => {
+    if (!activeGroup) return;
     const key = `${staffId}-${dayIndex}`;
-    if (rowTimeouts.current[key]) {
-      clearTimeout(rowTimeouts.current[key]);
-    }
+    if (rowTimeouts.current[key]) clearTimeout(rowTimeouts.current[key]);
+
     rowTimeouts.current[key] = setTimeout(async () => {
       setSyncStatus('syncing');
       try {
         const day = dayIndex + 1;
         const record_date = `${selectedMonth}-${day.toString().padStart(2, '0')}`;
 
-        const { error } = await supabase.from('daily_metrics').upsert({
+        const { error } = await supabase.from('daily_metrics_v2').upsert({
           staff_id: staffId,
+          group_id: activeGroup.id,
           record_date,
           month_str: selectedMonth,
-          care_neuro: record.careCountNeuro,
-          care_rehab: record.careCountRehab,
-          new_neuro: record.newPatientsNeuro,
-          new_rehab: record.newPatientsRehab,
-          new_other: record.newPatientsOther,
+          care_counts: record.careCounts,
+          new_patients: record.newPatients,
+          new_others: record.newPatientsOther,
           new_beds: record.newBeds
-        }, { onConflict: 'staff_id, record_date' });
+        }, { onConflict: 'staff_id, group_id, record_date' });
 
         if (error) throw error;
         setSyncStatus('synced');
@@ -162,7 +165,7 @@ export default function App() {
     }, 800);
   };
 
-  const handleUpdateMetric = (staffId: number, dayIndex: number, field: string, value: string) => {
+  const handleUpdateMetric = (staffId: number, dayIndex: number, type: 'careCounts' | 'newPatients' | 'newPatientsOther', deptId: string | null, value: string) => {
     const numValue = value === '' ? 0 : parseInt(value, 10);
     if (isNaN(numValue) || numValue < 0) return;
 
@@ -170,9 +173,19 @@ export default function App() {
     const updatedList = staffList.map(staff => {
       if (staff.id === staffId) {
         const newRecords = [...staff.records];
-        newRecords[dayIndex] = { ...newRecords[dayIndex], [field]: numValue };
-        targetRecord = newRecords[dayIndex];
-        return { ...staff, records: newRecords, ...recalculateStaffTotals(newRecords, currentCmiNeuro, currentCmiRehab) };
+        const updatedRecord = { ...newRecords[dayIndex] };
+
+        if (type === 'careCounts' && deptId) {
+          updatedRecord.careCounts = { ...updatedRecord.careCounts, [deptId]: numValue };
+        } else if (type === 'newPatients' && deptId) {
+          updatedRecord.newPatients = { ...updatedRecord.newPatients, [deptId]: numValue };
+        } else if (type === 'newPatientsOther') {
+          updatedRecord.newPatientsOther = numValue;
+        }
+
+        newRecords[dayIndex] = updatedRecord;
+        targetRecord = updatedRecord;
+        return { ...staff, records: newRecords, ...recalculateStaffTotals(newRecords, cmiConfig) };
       }
       return staff;
     });
@@ -180,9 +193,10 @@ export default function App() {
     setStaffList(updatedList);
 
     // Check mismatch for new patients UI
-    if (field === 'newPatientsNeuro' || field === 'newPatientsRehab' || field === 'newPatientsOther') {
-      if (targetRecord) {
-        const totalNew = targetRecord.newPatientsNeuro + targetRecord.newPatientsRehab + targetRecord.newPatientsOther;
+    if (type.startsWith('newPatients')) {
+      if (targetRecord && activeGroup) {
+        let totalNew = targetRecord.newPatientsOther || 0;
+        activeGroup.departments.forEach(d => totalNew += (targetRecord.newPatients[d.id] || 0));
         if (totalNew !== targetRecord.newBeds.length) setSyncStatus('mismatch');
         else setSyncStatus('synced');
       }
@@ -244,11 +258,13 @@ export default function App() {
   };
 
   const confirmClearMonth = async () => {
+    if (!activeGroup) return;
     setSyncStatus('syncing');
     try {
-      const { error } = await supabase.from('daily_metrics')
+      const { error } = await supabase.from('daily_metrics_v2')
         .delete()
         .eq('staff_id', selectedStaffId)
+        .eq('group_id', activeGroup.id)
         .eq('month_str', selectedMonth);
 
       if (error) throw error;
@@ -257,17 +273,15 @@ export default function App() {
         if (staff.id === selectedStaffId) {
           const newRecords = staff.records.map(r => ({
             ...r,
-            careCountNeuro: 0,
-            careCountRehab: 0,
-            newPatientsNeuro: 0,
-            newPatientsRehab: 0,
+            careCounts: {},
+            newPatients: {},
             newPatientsOther: 0,
             newBeds: []
           }));
           return {
             ...staff,
             records: newRecords,
-            ...recalculateStaffTotals(newRecords, currentCmiNeuro, currentCmiRehab)
+            ...recalculateStaffTotals(newRecords, cmiConfig)
           };
         }
         return staff;
@@ -284,12 +298,12 @@ export default function App() {
     }
   };
 
-  const handleCmiChange = (neuro: number, rehab: number) => {
-    setCurrentCmiNeuro(neuro);
-    setCurrentCmiRehab(rehab);
+  const handleCmiChange = (deptId: string, val: number) => {
+    const newConfig = { ...cmiConfig, [deptId]: val };
+    setCmiConfig(newConfig);
     const recalculated = staffList.map(staff => ({
       ...staff,
-      ...recalculateStaffTotals(staff.records, neuro, rehab)
+      ...recalculateStaffTotals(staff.records, newConfig)
     }));
     setStaffList(recalculated);
     showToast("已更新 CMI 並重新計算", 'success');
@@ -307,7 +321,7 @@ export default function App() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `神復組績效排名_${selectedMonth}.csv`);
+    link.setAttribute("download", `${activeGroup?.name || '專案'}績效排名_${selectedMonth}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -349,10 +363,9 @@ export default function App() {
 
     setSyncStatus('syncing');
     try {
-      // 在 Supabase 中 id 是 BIGINT 且自動遞增，我們不需要手動算 ID
       const { data, error } = await supabase
         .from('staff')
-        .insert({ name: newStaffName.trim(), is_active: true })
+        .insert({ name: newStaffName.trim(), is_active: true, group_id: activeGroup!.id })
         .select();
 
       if (error) {
@@ -363,8 +376,7 @@ export default function App() {
       if (data && data.length > 0) {
         showToast(`已新增人員 ${data[0].name}`, 'success');
         setNewStaffName('');
-        // 重新讀取當月資料以更新 UI
-        await loadDatabaseForMonth(selectedMonth);
+        await loadDatabaseForMonth(selectedMonth, activeGroup);
       }
     } catch (err: any) {
       console.error("Add Staff Failed:", err);
@@ -383,13 +395,14 @@ export default function App() {
 
     setSyncStatus('syncing');
     try {
+      // 在多群組架構中，只隱藏人員不直接刪除表內的內容
       const { error } = await supabase.from('staff').update({ is_active: false }).eq('id', staffToDelete.id);
       if (error) throw error;
 
       setIsDeleteStaffModalOpen(false);
       setStaffToDelete(null);
       showToast(`已刪除人員`, 'success');
-      loadDatabaseForMonth(selectedMonth);
+      loadDatabaseForMonth(selectedMonth, activeGroup);
     } catch (err) {
       console.error(err);
       setSyncStatus('error');
@@ -397,11 +410,25 @@ export default function App() {
     }
   };
 
+  // 首頁渲染
+  if (!activeGroup) {
+    return (
+      <GroupSelector onSelectGroup={(group) => {
+        // 設定初始 CMI 都為 1.000
+        const initialCmi: Record<string, number> = {};
+        group.departments.forEach(d => initialCmi[d.id] = 1.0);
+        setCmiConfig(initialCmi);
+        setActiveGroup(group);
+      }} />
+    );
+  }
+
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden">
       <Sidebar
         isExpanded={isSidebarExpanded}
         currentView={currentView}
+        activeGroupName={activeGroup.name}
         onNavigate={(view) => {
           if (view === 'dashboard') {
             requireAdminAuth(() => setCurrentView(view));
@@ -410,6 +437,10 @@ export default function App() {
           }
         }}
         onManageStaff={handleManageStaff}
+        onBackToHome={() => {
+          setActiveGroup(null);
+          setCurrentView('entry-care');
+        }}
       />
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
@@ -421,26 +452,28 @@ export default function App() {
 
         {currentView === 'entry-care' && (
           <CareEntry
+            activeGroup={activeGroup}
             staffList={staffList}
             selectedStaffId={selectedStaffId}
             selectedMonth={selectedMonth}
             onStaffChange={setSelectedStaffId}
             onMonthChange={setSelectedMonth}
             onClearMonth={handleClearMonth}
-            onSaveToCloud={() => showToast("現在系統會在每次輸入時自動且即時存檔！無需再手動點儲存。", "success")}
+            onSaveToCloud={() => showToast("系統自動存檔中", "success")}
             onUpdateMetric={handleUpdateMetric}
           />
         )}
 
         {currentView === 'entry-new' && (
           <NewPatientEntry
+            activeGroup={activeGroup}
             staffList={staffList}
             selectedStaffId={selectedStaffId}
             selectedMonth={selectedMonth}
             onStaffChange={setSelectedStaffId}
             onMonthChange={setSelectedMonth}
             onClearMonth={handleClearMonth}
-            onSaveToCloud={() => showToast("現在系統會在每次輸入時自動且即時存檔！無需再手動點儲存。", "success")}
+            onSaveToCloud={() => showToast("系統自動存檔中", "success")}
             onUpdateMetric={handleUpdateMetric}
             onAddBedPrompt={handleAddBedPrompt}
             onRemoveBed={handleRemoveBed}
@@ -449,11 +482,11 @@ export default function App() {
 
         {currentView === 'dashboard' && (
           <Dashboard
+            activeGroup={activeGroup}
             staffList={staffList}
             selectedMonth={selectedMonth}
             onMonthChange={setSelectedMonth}
-            currentCmiNeuro={currentCmiNeuro}
-            currentCmiRehab={currentCmiRehab}
+            cmiConfig={cmiConfig}
             onCmiChange={handleCmiChange}
             onExportCSV={handleExportCSV}
           />
@@ -474,7 +507,7 @@ export default function App() {
         ))}
       </div>
 
-      {/* Modals */}
+      {/* Modals 保持與舊版相同... */}
       {isAddBedModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden transform transition-all scale-100">
@@ -510,7 +543,7 @@ export default function App() {
                 <AlertTriangle className="w-6 h-6" />
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-2">確定要清空資料嗎？</h3>
-              <p className="text-sm text-slate-500">這將會清除 <span className="font-bold text-slate-700">{staffList.find(s => s.id === selectedStaffId)?.name}</span> 在 {selectedMonth} 的所有寫入紀錄，且無法復原。</p>
+              <p className="text-sm text-slate-500">這將會清除 <span className="font-bold text-slate-700">{staffList.find(s => s.id === selectedStaffId)?.name}</span> 在 {selectedMonth} 於 <span className="font-bold">{activeGroup.name}</span> 的所有寫入紀錄，且無法復原。</p>
             </div>
             <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-center gap-3">
               <button onClick={() => setIsClearMonthModalOpen(false)} className="px-5 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50">取消</button>
@@ -551,12 +584,12 @@ export default function App() {
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[80vh]">
             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="font-bold text-slate-800">名單管理設定</h3>
+              <h3 className="font-bold text-slate-800">名單管理設定 ({activeGroup.name})</h3>
               <button onClick={() => setIsManageStaffModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
             </div>
 
             <div className="p-5 border-b border-slate-100 bg-white">
-              <label className="block text-sm font-medium text-slate-700 mb-2">新增人員</label>
+              <p className="text-xs text-slate-400 mb-2">請注意：新增與刪除的人員會套用到所有群組，也就是全域的員工名單。</p>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -621,7 +654,7 @@ export default function App() {
                 <AlertTriangle className="w-6 h-6" />
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-2">確定要刪除人員嗎？</h3>
-              <p className="text-sm text-slate-500">刪除後 <span className="font-bold text-slate-700">{staffToDelete.name}</span> 將不會在此月出現。資料已作軟刪除。</p>
+              <p className="text-sm text-slate-500">刪除後 <span className="font-bold text-slate-700">{staffToDelete.name}</span> 將不會在此月出現。這將同時反應在所有群組的名單中。</p>
             </div>
             <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-center gap-3">
               <button onClick={() => setIsDeleteStaffModalOpen(false)} className="px-5 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50">取消</button>

@@ -2,10 +2,8 @@ export interface DailyRecord {
   date: string;
   day: number;
   dayOfWeek: number;
-  careCountNeuro: number;
-  careCountRehab: number;
-  newPatientsNeuro: number;
-  newPatientsRehab: number;
+  careCounts: Record<string, number>;
+  newPatients: Record<string, number>;
   newPatientsOther: number;
   newBeds: string[];
 }
@@ -15,8 +13,7 @@ export interface StaffData {
   name: string;
   records: DailyRecord[];
   totalCare: number;
-  totalCareNeuro: number;
-  totalCareRehab: number;
+  totalCareByDept: Record<string, number>;
   totalNew: number;
   workdays: number;
   careScore: string;

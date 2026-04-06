@@ -1,16 +1,18 @@
 import React from 'react';
-import { Brain, Stethoscope, UserPlus, ChartLine, Users } from 'lucide-react';
+import { Brain, Stethoscope, UserPlus, ChartLine, Users, Home } from 'lucide-react';
 import { ViewType } from '../types';
 import { cn } from '../lib/utils';
 
 interface SidebarProps {
   isExpanded: boolean;
   currentView: ViewType;
+  activeGroupName?: string;
   onNavigate: (view: ViewType) => void;
   onManageStaff: () => void;
+  onBackToHome: () => void;
 }
 
-export function Sidebar({ isExpanded, currentView, onNavigate, onManageStaff }: SidebarProps) {
+export function Sidebar({ isExpanded, currentView, activeGroupName, onNavigate, onManageStaff, onBackToHome }: SidebarProps) {
   const navItems = [
     { id: 'entry-care' as ViewType, icon: Stethoscope, label: '照護數填報' },
     { id: 'entry-new' as ViewType, icon: UserPlus, label: '新接數與病歷號碼' },
@@ -33,11 +35,28 @@ export function Sidebar({ isExpanded, currentView, onNavigate, onManageStaff }: 
             isExpanded ? "opacity-100" : "opacity-0"
           )}
         >
-          1.神復組
+          {activeGroupName || "Neuro Rehab"}
         </span>
       </div>
 
       <nav className="flex-1 mt-6 flex flex-col gap-2 min-w-[16rem]">
+        <button
+          onClick={onBackToHome}
+          className="flex items-center py-3 text-slate-500 border-l-4 border-transparent hover:bg-slate-50 transition-colors text-left w-full border-b border-slate-100 mb-2 pb-4"
+        >
+          <div className="w-20 flex justify-center items-center flex-shrink-0">
+            <Home className="w-5 h-5" />
+          </div>
+          <span
+            className={cn(
+              "whitespace-nowrap transition-opacity duration-200",
+              isExpanded ? "opacity-100" : "opacity-0"
+            )}
+          >
+            回首頁 (切換組別)
+          </span>
+        </button>
+
         {navItems.map((item) => (
           <button
             key={item.id}
@@ -116,7 +135,7 @@ export function Sidebar({ isExpanded, currentView, onNavigate, onManageStaff }: 
           )}
         >
           <p className="text-sm font-bold text-slate-700">系統管理員</p>
-          <p className="text-xs text-slate-400">Neuro & Rehab Dept.</p>
+          <p className="text-xs text-slate-400">Multi Group Sys.</p>
         </div>
       </div>
     </aside>
