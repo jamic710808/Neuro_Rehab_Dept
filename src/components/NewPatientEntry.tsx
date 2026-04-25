@@ -36,7 +36,9 @@ export function NewPatientEntry({
 
   const generateMonthOptions = () => {
     const options = [];
-    for (let y = 2026; y <= 2027; y++) {
+    const currentYear = new Date().getFullYear();
+    const endYear = Math.max(2028, currentYear + 1);
+    for (let y = 2026; y <= endYear; y++) {
       const group = [];
       for (let m = 1; m <= 12; m++) {
         const value = `${y}-${m}`;

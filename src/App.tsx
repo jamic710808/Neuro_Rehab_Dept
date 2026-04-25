@@ -339,7 +339,7 @@ export default function App() {
   };
 
   const confirmAdminAuth = () => {
-    if (adminPassword === 'admin123') {
+    if (adminPassword === 'A200') {
       setIsAdminAuthenticated(true);
       setIsAdminAuthModalOpen(false);
       if (pendingAdminAction) {
@@ -561,7 +561,7 @@ export default function App() {
               <button onClick={() => setIsAdminAuthModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-5">
-              <p className="text-sm text-slate-500 mb-4">請輸入管理員密碼以存取此功能 (預設: admin123)</p>
+              <p className="text-sm text-slate-500 mb-4">請輸入管理員密碼以存取此功能</p>
               <input
                 type="password"
                 value={adminPassword}
