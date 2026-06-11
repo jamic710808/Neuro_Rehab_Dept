@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   LayoutGrid, Settings2, Calendar, Download, Save,
   Users, UserPlus, ChartLine, Trophy, TrendingUp, PieChart,
@@ -46,6 +46,16 @@ export function Dashboard({
     });
     return init;
   });
+
+  // 切換月份 / 群組時，cmiConfig 會由上層從 localStorage 重新載入，
+  // 這裡同步刷新輸入框顯示，避免畫面停留在舊月份的數值。
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    activeGroup.departments.forEach(d => {
+      next[d.id] = (cmiConfig[d.id] ?? 1.0).toFixed(4);
+    });
+    setLocalCmiInputs(next);
+  }, [cmiConfig, activeGroup]);
 
   const handleCmiBlur = (deptId: string) => {
     const val = parseFloat(localCmiInputs[deptId]) || 1.0;

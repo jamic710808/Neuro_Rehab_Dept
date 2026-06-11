@@ -11,9 +11,11 @@ import { supabase } from './supabase';
 import { CheckCircle, AlertTriangle, X, Plus, Trash } from 'lucide-react';
 import { GROUPS, GroupConfig } from './config/groups';
 
+// 月份格式統一為「無補零」(例如 2026-6)，與所有下拉選單及資料庫既有資料一致。
+// 切勿改回補零格式，否則 CMI 與每日指標的 key 會對不上線上資料。
 const getInitialMonth = () => {
   const now = new Date();
-  return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
+  return `${now.getFullYear()}-${now.getMonth() + 1}`;
 };
 
 export default function App() {
@@ -56,21 +58,6 @@ export default function App() {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 3000);
   }, []);
-
-  const loadCmiFromStorage = (group: GroupConfig, monthStr: string): Record<string, number> => {
-    const base: Record<string, number> = {};
-    group.departments.forEach(d => { base[d.id] = 1.0; });
-    const stored = localStorage.getItem(`cmi_${group.id}_${monthStr}`);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        group.departments.forEach(d => {
-          if (typeof parsed[d.id] === 'number') base[d.id] = parsed[d.id];
-        });
-      } catch {}
-    }
-    return base;
-  };
 
   const loadDatabaseForMonth = useCallback(async (monthStr: string, group: GroupConfig | null) => {
     if (!group) return;
