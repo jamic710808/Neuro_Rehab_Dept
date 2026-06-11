@@ -57,12 +57,41 @@ export default function App() {
     }, 3000);
   }, []);
 
+  const loadCmiFromStorage = (group: GroupConfig, monthStr: string): Record<string, number> => {
+    const base: Record<string, number> = {};
+    group.departments.forEach(d => { base[d.id] = 1.0; });
+    const stored = localStorage.getItem(`cmi_${group.id}_${monthStr}`);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        group.departments.forEach(d => {
+          if (typeof parsed[d.id] === 'number') base[d.id] = parsed[d.id];
+        });
+      } catch {}
+    }
+    return base;
+  };
+
   const loadDatabaseForMonth = useCallback(async (monthStr: string, group: GroupConfig | null) => {
     if (!group) return;
     setSyncStatus('syncing');
 
     try {
       const [year, month] = monthStr.split('-').map(Number);
+
+      // Load CMI from localStorage for this group+month combination
+      const activeCmi: Record<string, number> = {};
+      group.departments.forEach(d => { activeCmi[d.id] = 1.0; });
+      const stored = localStorage.getItem(`cmi_${group.id}_${monthStr}`);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          group.departments.forEach(d => {
+            if (typeof parsed[d.id] === 'number') activeCmi[d.id] = parsed[d.id];
+          });
+        } catch {}
+      }
+      setCmiConfig(activeCmi);
 
       // 1. Fetch active staff filtered by group
       const { data: staffData, error: staffErr } = await supabase
@@ -109,7 +138,7 @@ export default function App() {
           id: Number(staff.id),
           name: staff.name,
           records: records,
-          ...recalculateStaffTotals(records, cmiConfig)
+          ...recalculateStaffTotals(records, activeCmi)
         };
       });
 
@@ -125,7 +154,7 @@ export default function App() {
       setSyncStatus('error');
       showToast("載入資料失敗，請檢查網路或是資料庫設定", 'error');
     }
-  }, [cmiConfig, selectedStaffId, showToast]);
+  }, [selectedStaffId, showToast]);
 
   // Hook to reload when month or active group changes
   useEffect(() => {
@@ -306,8 +335,18 @@ export default function App() {
       ...recalculateStaffTotals(staff.records, newConfig)
     }));
     setStaffList(recalculated);
-    showToast("已更新 CMI 並重新計算", 'success');
   };
+
+  const handleSaveCmi = useCallback((cmiValues: Record<string, number>) => {
+    if (!activeGroup) return;
+    localStorage.setItem(`cmi_${activeGroup.id}_${selectedMonth}`, JSON.stringify(cmiValues));
+    setCmiConfig(cmiValues);
+    setStaffList(prev => prev.map(staff => ({
+      ...staff,
+      ...recalculateStaffTotals(staff.records, cmiValues)
+    })));
+    showToast(`${selectedMonth} CMI 設定已儲存`, 'success');
+  }, [activeGroup, selectedMonth, showToast]);
 
   const handleExportCSV = () => {
     const sorted = [...staffList].sort((a, b) => b.totalScore - a.totalScore);
@@ -414,11 +453,7 @@ export default function App() {
   if (!activeGroup) {
     return (
       <GroupSelector onSelectGroup={(group) => {
-        // 設定初始 CMI 都為 1.000
-        const initialCmi: Record<string, number> = {};
-        group.departments.forEach(d => initialCmi[d.id] = 1.0);
-        setCmiConfig(initialCmi);
-        setActiveGroup(group);
+        setActiveGroup(group); // CMI 由 loadDatabaseForMonth 從 localStorage 載入
       }} />
     );
   }
@@ -488,6 +523,7 @@ export default function App() {
             onMonthChange={setSelectedMonth}
             cmiConfig={cmiConfig}
             onCmiChange={handleCmiChange}
+            onSaveCmi={handleSaveCmi}
             onExportCSV={handleExportCSV}
           />
         )}

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  LayoutGrid, Settings2, Calendar, Download,
+  LayoutGrid, Settings2, Calendar, Download, Save,
   Users, UserPlus, ChartLine, Trophy, TrendingUp, PieChart,
   ClipboardList, Pointer, Bed, CheckCircle, AlertTriangle
 } from 'lucide-react';
@@ -19,6 +19,7 @@ interface DashboardProps {
   onMonthChange: (month: string) => void;
   cmiConfig: Record<string, number>;
   onCmiChange: (deptId: string, value: number) => void;
+  onSaveCmi: (cmiValues: Record<string, number>) => void;
   onExportCSV: () => void;
 }
 
@@ -29,6 +30,7 @@ export function Dashboard({
   onMonthChange,
   cmiConfig,
   onCmiChange,
+  onSaveCmi,
   onExportCSV
 }: DashboardProps) {
   const [viewMode, setViewMode] = useState<DashViewMode>('overview');
@@ -53,6 +55,20 @@ export function Dashboard({
 
   const handleCmiKeyDown = (e: React.KeyboardEvent, deptId: string) => {
     if (e.key === 'Enter') handleCmiBlur(deptId);
+  };
+
+  const handleSaveButton = () => {
+    const parsed: Record<string, number> = {};
+    activeGroup.departments.forEach(d => {
+      parsed[d.id] = parseFloat(localCmiInputs[d.id]) || 1.0;
+    });
+    // 同步修正顯示格式
+    setLocalCmiInputs(prev => {
+      const updated = { ...prev };
+      activeGroup.departments.forEach(d => { updated[d.id] = parsed[d.id].toFixed(4); });
+      return updated;
+    });
+    onSaveCmi(parsed);
   };
 
   const sortedStaffList = [...staffList].sort((a, b) => b.totalScore - a.totalScore);
@@ -455,6 +471,13 @@ export function Dashboard({
             />
           </div>
         ))}
+        <button
+          onClick={handleSaveButton}
+          className="ml-2 flex items-center gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold px-3 py-1.5 rounded shadow-sm transition-colors whitespace-nowrap"
+        >
+          <Save className="w-3.5 h-3.5" />
+          儲存 CMI
+        </button>
       </div>
 
       <div className="flex-1 flex overflow-hidden">
